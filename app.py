@@ -12,8 +12,9 @@ from graph_templates import GraphTemplate
 template_objects = []
 templates = []
 modlist = ['cpu', 'swift_object_server', 'swift_tempauth']
+
 for module in modlist:
-    imp = __import__('graph_templates', globals(), locals(), [module])
+    imp = __import__('graph_templates.'+module, globals(), locals(), ['*'])
     for itemname in dir(imp):
         item = getattr(imp, itemname)
         if isclass(item) and item != GraphTemplate and issubclass(item, GraphTemplate):
