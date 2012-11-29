@@ -1,16 +1,27 @@
 #!/usr/bin/env python2
 import os, json, sys, traceback, re
+from inspect import isclass
 from bottle import route, run, debug, template, request, validate, static_file, redirect, response
 from config import *
 
 # this bit of code should be more dynamic but that goes beyond my python-fu
 # we basically want to import all templates in a given directory, instantiate objects from their classes,
 # and keep a list of all of them (pref. alphabetically ordered)
-from graph_templates.cpu import CpuTemplate
-from graph_templates.swift_object_server import SwiftObjectServerTemplate
-from graph_templates.swift_tempauth import SwiftTempauthTemplate
-template_objects = [CpuTemplate(), SwiftObjectServerTemplate(), SwiftTempauthTemplate()]
-templates = ["cpu", "swift_object_server", "swift_tempauth"]
+from graph_templates import GraphTemplate
+
+template_objects = []
+templates = []
+modlist = ['cpu', 'swift_object_server', 'swift_tempauth']
+for module in modlist:
+    imp = __import__('graph_templates', globals(), locals(), [module])
+    for itemname in dir(imp):
+        item = getattr(imp, itemname)
+        if isclass(item) and item != GraphTemplate and issubclass(item, GraphTemplate):
+            template_objects.append(item())
+            templates.append(module)
+
+print "templates:", templates
+print template_objects
 
 def list_targets (metrics):
     targets = {}    
@@ -31,25 +42,34 @@ def parse_pattern(pattern):
     if group_by_match and group_by_match.groups() > 0:
         group_by = group_by_match.groups(1)[0].replace('group by ','')
         pattern = pattern[:group_by_match.start(1)] + pattern[group_by_match.end(1):]
+    # split pattern into multiple words which are all matched independently
+    # this allows you write words in any order, and also makes it easy to use negations
+    pattern = pattern.split()
     # if the pattern doesn't contain a "graph type specifier" like 'tpl' or 'targets',
     # assume we only want tpl ones. that sounds like good default behavior..
     if 'tpl' not in pattern and 'targets' not in pattern:
-        pattern = '^tpl_.*' + pattern
+        pattern.append('tpl')
     pattern = {
-        #replace ' ' with '.*' and use as regex, allows easy but powerful matching
-        'pattern': pattern.replace(' ','.*'),
+        'pattern': pattern,
         'group_by': group_by
     }
     return pattern
 
 # objects is expected to be a dict with elements like id: data
 # id's are matched, and the return value is a dict in the same format
+# every part of the pattern must match
 def match(objects, pattern):
-    object = re.compile(pattern)
     objects_matching = {}
     for (id, data) in objects.items():
-        match = object.search(id)
-        if match is not None:
+        match = True
+        for patt in pattern['pattern']:
+            if patt.startswith('!'):
+                if patt[1:] in id:
+                    match = False
+            else:
+                if patt not in id:
+                    match = False
+        if match:
             objects_matching[id] = data
     return objects_matching
 
@@ -136,8 +156,8 @@ def graphs(pattern = ''):
     targets_all = list_targets(metrics)
     graphs_all = list_graphs(metrics)
     pattern = parse_pattern(pattern)
-    targets_matching = match(targets_all, pattern['pattern'])
-    graphs_matching = match(graphs_all, pattern['pattern'])
+    targets_matching = match(targets_all, pattern)
+    graphs_matching = match(graphs_all, pattern)
     graphs_targets_matching = build_graphs_from_targets(targets_matching, pattern)[0]
     len_targets_matching = len(targets_matching)
     len_graphs_matching = len(graphs_matching)
